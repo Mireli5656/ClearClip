@@ -170,13 +170,16 @@
     if (!data) throw new Error("The instance sent an empty response.");
 
     if (data.status === "tunnel" || data.status === "redirect") {
-      return [{ label: "Download video", url: data.url, name: data.filename }];
+      return { items: [{ label: "Download video", url: data.url, name: data.filename }], meta: null };
     }
     if (data.status === "picker" && Array.isArray(data.picker)) {
-      return data.picker.map((entry, index) => ({
-        label: `Download ${entry.type === "photo" ? "photo" : "video"} ${index + 1}`,
-        url: entry.url
-      }));
+      return {
+        items: data.picker.map((entry, index) => ({
+          label: `Download ${entry.type === "photo" ? "photo" : "video"} ${index + 1}`,
+          url: entry.url
+        })),
+        meta: null
+      };
     }
     if (data.status === "error") {
       throw new Error(explainCobalt(data.error && data.error.code));
@@ -184,24 +187,106 @@
     throw new Error(`This instance returned a response ClearClip can't use (${data.status}).`);
   }
 
-  async function viaTikwm(link) {
-    const data = await fetchJson(`https://tikwm.com/api/?hd=1&url=${encodeURIComponent(link)}`);
+  async function viaTikwm(link, retried = false) {
+    // Use the www host: tikwm.com redirects to www, and a redirect breaks the CORS check in browsers.
+    const data = await fetchJson(`https://www.tikwm.com/api/?url=${encodeURIComponent(link)}&hd=1`);
     if (!data || data.code !== 0 || !data.data) {
-      throw new Error("Couldn't find this TikTok video, or the TikTok service isn't responding.");
+      const reason = data && data.msg ? String(data.msg) : "";
+      if (!retried && /limit/i.test(reason)) {
+        // the free API allows about one request per second: wait and retry once
+        await new Promise((resolve) => setTimeout(resolve, 1300));
+        return viaTikwm(link, true);
+      }
+      throw new Error(
+        reason
+          ? `The TikTok service replied: ${reason}`
+          : "Couldn't find this TikTok video, or the TikTok service isn't responding."
+      );
     }
     const absolute = (u) => (u && u.startsWith("/") ? `https://www.tikwm.com${u}` : u);
-    const hd = absolute(data.data.hdplay);
-    const sd = absolute(data.data.play);
+    const d = data.data;
+    const hd = absolute(d.hdplay);
+    const sd = absolute(d.play);
+    const music = absolute(typeof d.music === "string" ? d.music : d.music_info && d.music_info.play);
+    const id = String(d.id || "video").replace(/[^\w-]/g, "");
+
     const items = [];
-    if (hd) items.push({ label: "Download HD video", url: hd });
-    if (sd && sd !== hd) items.push({ label: "Download standard video", url: sd });
+    if (hd) items.push({ label: "Download HD video", url: hd, name: `clearclip_${id}_hd.mp4`, blob: true });
+    if (sd && sd !== hd) items.push({ label: "Download standard video", url: sd, name: `clearclip_${id}.mp4`, blob: true });
     if (!items.length) throw new Error("No watermark-free version was found for this video.");
-    return items;
+    if (music) items.push({ label: "Download MP3 audio", url: music, name: `clearclip_${id}.mp3`, blob: true });
+
+    const meta = {
+      cover: absolute(d.cover),
+      title: d.title || "",
+      author: (d.author && d.author.unique_id) || ""
+    };
+    return { items, meta };
   }
 
   // ---------- results ----------
-  function showItems(items, platform) {
+  // Saves the file from inside the page so it lands in Downloads with a proper name.
+  // If the host blocks that (CORS), fall back to opening the file directly.
+  async function saveAsFile(href, name, link) {
+    if (link.dataset.busy) return;
+    link.dataset.busy = "1";
+    const label = link.lastChild;
+    const original = label.textContent;
+    label.textContent = "Downloading…";
+    try {
+      const response = await fetch(href);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blobUrl = URL.createObjectURL(await response.blob());
+      const temp = document.createElement("a");
+      temp.href = blobUrl;
+      temp.download = name || "clearclip";
+      document.body.append(temp);
+      temp.click();
+      temp.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+      setStatus("Download started. Check your Downloads folder.", "ok");
+    } catch {
+      window.location.href = href;
+    } finally {
+      label.textContent = original;
+      delete link.dataset.busy;
+    }
+  }
+
+  function buildMeta(meta) {
+    const card = document.createElement("div");
+    card.className = "meta";
+
+    const cover = safeUrl(meta.cover);
+    if (cover) {
+      const img = document.createElement("img");
+      img.className = "thumb";
+      img.src = cover;
+      img.alt = "";
+      img.loading = "lazy";
+      img.referrerPolicy = "no-referrer";
+      card.append(img);
+    }
+
+    const text = document.createElement("div");
+    text.className = "meta-text";
+    const title = document.createElement("div");
+    title.className = "meta-title";
+    title.textContent = meta.title ? meta.title.slice(0, 90) : "TikTok video"; // textContent: never HTML
+    text.append(title);
+    if (meta.author) {
+      const author = document.createElement("div");
+      author.className = "meta-author";
+      author.textContent = `@${meta.author}`;
+      text.append(author);
+    }
+    card.append(text);
+    return card;
+  }
+
+  function showItems(items, platform, meta) {
     resultEl.replaceChildren();
+    if (meta && (meta.title || meta.author || meta.cover)) resultEl.append(buildMeta(meta));
     let count = 0;
 
     for (const entry of items) {
@@ -217,6 +302,12 @@
       link.target = "_blank";
       link.rel = "noopener noreferrer";
       if (entry.name) link.download = entry.name;
+      if (entry.blob) {
+        link.addEventListener("click", (event) => {
+          event.preventDefault();
+          saveAsFile(href, entry.name, link);
+        });
+      }
       link.insertAdjacentHTML("afterbegin", DOWNLOAD_ICON); // static markup only
       link.append(document.createTextNode(entry.label));
 
@@ -274,16 +365,16 @@
     setStatus(`Getting your ${platform} video…`);
 
     try {
-      let items;
+      let result;
       if (api) {
         try {
-          items = await viaCobalt(api, link, quality);
+          result = await viaCobalt(api, link, quality);
         } catch (error) {
           if (platform !== "TikTok") throw error;
-          try { items = await viaTikwm(link); } catch { throw error; }
+          try { result = await viaTikwm(link); } catch { throw error; }
         }
       } else if (platform === "TikTok") {
-        items = await viaTikwm(link);
+        result = await viaTikwm(link);
       } else {
         setStatus(`${platform} needs a Cobalt API address.`, "err", {
           label: "Open settings",
@@ -291,7 +382,7 @@
         });
         return;
       }
-      showItems(items, platform);
+      showItems(result.items, platform, result.meta);
     } catch (error) {
       setStatus(error.message || "Something went wrong. Try again.", "err");
     } finally {
