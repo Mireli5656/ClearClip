@@ -377,8 +377,8 @@ button { cursor: pointer; }
   gap: .5rem;
   animation: rise .45s .6s both cubic-bezier(.2, .7, .2, 1);
 }
-.item:nth-child(2) { animation-delay: .7s; }
-.item:nth-child(n + 3) { animation-delay: .8s; }
+.item:nth-child(n + 2) { animation-delay: .65s; }
+.item:nth-child(n + 3) { animation-delay: .75s; }
 
 .dl {
   display: flex;
@@ -505,3 +505,38 @@ dialog .lead { margin: 0 0 1.25rem; color: var(--muted); }
   }
   .item { animation-delay: 0s !important; }
 }
+
+/* ---------- video preview card ---------- */
+
+.meta {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  padding: .6rem;
+  border: 1px solid var(--line);
+  border-radius: .875rem;
+  background: var(--foam);
+  animation: rise .45s .55s both cubic-bezier(.2, .7, .2, 1);
+}
+
+.thumb {
+  flex: none;
+  width: 3.5rem;
+  height: 3.5rem;
+  border-radius: .625rem;
+  object-fit: cover;
+  background: var(--line);
+}
+
+.meta-text { min-width: 0; }
+
+.meta-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.meta-author { font-size: .875rem; color: var(--muted); }
