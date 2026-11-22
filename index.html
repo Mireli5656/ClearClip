@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>ClearClip: save videos without the watermark</title>
-  <meta name="description" content="Paste a TikTok, Instagram, Snapchat or Facebook link and save the original video in the best quality available.">
+  <title>ClearClip: save TikTok and Instagram videos</title>
+  <meta name="description" content="Paste a TikTok or Instagram link and save the original video in the best quality available.">
   <meta name="theme-color" content="#E9F3F4" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#0A2A32" media="(prefers-color-scheme: dark)">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23FFB627'/%3E%3Cpath d='M12 9.5v13l11-6.5z' fill='%230C3B46'/%3E%3C/svg%3E">
@@ -26,22 +26,25 @@
       </svg>
       <span>ClearClip</span>
     </a>
-    <button id="openSettings" class="icon-btn" type="button" aria-label="Connection settings">
-      <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
-        <path d="M4 7h9M17 7h3M4 17h3M11 17h9"/>
-        <circle cx="15" cy="7" r="2"/>
-        <circle cx="9" cy="17" r="2"/>
-      </svg>
-    </button>
   </header>
 
   <main class="wrap">
     <section class="intro">
       <h1>Save any clip without the watermark.</h1>
-      <p>Paste a link from TikTok, Instagram, Snapchat or Facebook. You get the original video in the best quality available.</p>
+      <p>Pick TikTok or Instagram, paste the link, and get the original video in the best quality available.</p>
     </section>
 
     <form id="form" class="tool" novalidate>
+
+      <fieldset class="platform">
+        <legend>Platform</legend>
+        <div class="seg">
+          <input type="radio" name="platform" id="p-tiktok" value="TikTok" checked>
+          <label for="p-tiktok">TikTok</label>
+          <input type="radio" name="platform" id="p-instagram" value="Instagram">
+          <label for="p-instagram">Instagram</label>
+        </div>
+      </fieldset>
 
       <div id="frame" class="frame">
         <span class="c tl" aria-hidden="true"></span>
@@ -52,7 +55,7 @@
         <div class="sweep" aria-hidden="true"></div>
 
         <div class="frame-body">
-          <span id="pill" class="pill" data-state="idle">Paste a link</span>
+          <span id="pill" class="pill" data-state="idle">Paste a TikTok link</span>
           <div class="field">
             <label class="sr-only" for="link">Video link</label>
             <input id="link" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" placeholder="https://www.tiktok.com/@user/video/…">
@@ -60,18 +63,6 @@
           </div>
         </div>
       </div>
-
-      <fieldset class="quality">
-        <legend>Quality</legend>
-        <div class="seg">
-          <input type="radio" name="q" id="q-max" value="max" checked>
-          <label for="q-max">Best</label>
-          <input type="radio" name="q" id="q-1080" value="1080">
-          <label for="q-1080">1080p</label>
-          <input type="radio" name="q" id="q-720" value="720">
-          <label for="q-720">720p</label>
-        </div>
-      </fieldset>
 
       <button id="go" class="go" type="submit">Get video</button>
       <div id="status" class="status" role="status" aria-live="polite"></div>
@@ -84,30 +75,6 @@
   <footer class="wrap foot">
     <p>Public videos only. For personal use; respect creators’ rights and each platform’s terms of service.</p>
   </footer>
-
-  <dialog id="settings" aria-labelledby="settingsTitle">
-    <form id="settingsForm" novalidate>
-      <h2 id="settingsTitle">Connection settings</h2>
-      <p class="lead">TikTok works without any setup. For Instagram, Snapchat and Facebook, add the address of a Cobalt API instance you are allowed to use.</p>
-
-      <div class="sfield">
-        <label for="api">Cobalt API address</label>
-        <input id="api" type="text" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://cobalt.example.com">
-      </div>
-      <div class="sfield">
-        <label for="key">API key <span class="opt">(only if the instance asks for one)</span></label>
-        <input id="key" type="password" autocomplete="off" placeholder="Paste your key">
-      </div>
-      <p class="hint">Saved in this browser only. Nothing is stored in the site’s code.</p>
-      <p id="settingsError" class="serror" role="alert" hidden></p>
-
-      <div class="actions">
-        <button class="go" type="submit">Save settings</button>
-        <button id="cancel" class="ghost" type="button">Cancel</button>
-      </div>
-      <button id="forget" class="linkbtn forget" type="button">Remove saved settings</button>
-    </form>
-  </dialog>
 
   <script src="script.js"></script>
 </body>
