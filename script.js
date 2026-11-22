@@ -211,19 +211,12 @@
   }
 
   // ---------- Instagram (your Cloudflare Worker) ----------
-  // The parser accepts the common response shapes: a single video/image URL, or a list of
-  // media entries, with an optional thumbnail, caption/title and username.
+  // The Worker's response is searched for media files wherever they sit. Video files always win:
+  // images are only used for the preview card, or offered when the post is a photo-only post.
 
-  const MEDIA_LIST_KEYS = ["media", "medias", "items", "links", "downloads", "urls", "carousel", "children", "videos", "results"];
-  const MEDIA_URL_KEYS = [
-    "video_url", "videoUrl", "download_url", "downloadUrl", "direct_url", "directUrl",
-    "url", "link", "src", "video", "image_url", "imageUrl", "display_url", "displayUrl", "image", "photo"
-  ];
-  const THUMB_KEYS = [
-    "thumbnail", "thumbnail_url", "thumbnailUrl", "thumb", "cover", "preview", "poster",
-    "display_url", "displayUrl", "image_url", "imageUrl", "image"
-  ];
   const ROUTE_ERROR = /\b(route|endpoint)\b|cannot (get|post)|^\s*(404\s*)?not found\s*$/i;
+  const SKIP_KEYS = /^(user|owner|author|avatar|profile|profile_pic\w*|account|uploader|music|audio)$/i;
+  const VARIANT_KEYS = /version|format|quality|source|variant|resolution/i;
 
   const asText = (value) => {
     if (typeof value === "string") return value.trim();
@@ -239,33 +232,69 @@
     return !(host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am");
   }
 
-  function firstUrl(object, keys) {
-    for (const key of keys) {
-      if (isMediaUrl(object[key])) return object[key].trim();
-    }
-    return "";
-  }
+  // Best guess of what a URL is: "video", "photo", "audio" or "unknown" (e.g. a proxied download link).
+  function classify(url, key, parent) {
+    const path = url.split("?")[0].toLowerCase();
+    if (/\.(mp4|mov|webm|m4v)$/.test(path)) return "video";
+    if (/\.(jpe?g|png|webp|heic|gif)$/.test(path)) return "photo";
+    if (/\.(mp3|m4a|aac|ogg|wav)$/.test(path)) return "audio";
 
-  function mediaKind(entry, url) {
-    const hint = String(entry.type || entry.media_type || entry.mediaType || entry.kind || "").toLowerCase();
-    if (entry.is_video === true || hint === "2" || /video|reel/.test(hint)) return "video";
+    const k = String(key).toLowerCase();
+    if (/video|mp4|play|stream|reel/.test(k)) return "video";
+    if (/image|photo|thumb|cover|display|poster|preview|pic/.test(k)) return "photo";
+
+    const hint = String((parent && (parent.type || parent.media_type || parent.mediaType || parent.kind)) || "").toLowerCase();
+    if ((parent && parent.is_video === true) || hint === "2" || /video|reel/.test(hint)) return "video";
     if (hint === "1" || /image|photo|sidecar/.test(hint)) return "photo";
-    if (/\.(mp4|mov|webm)(\?|$)/i.test(url)) return "video";
-    if (/\.(jpe?g|png|webp|heic)(\?|$)/i.test(url)) return "photo";
-    return "video";
+    return "unknown";
   }
 
-  function toEntry(raw) {
-    if (typeof raw === "string") {
-      return isMediaUrl(raw) ? { url: raw.trim(), thumb: "", kind: mediaKind({}, raw) } : null;
+  // Walk the whole response and collect every media URL with its best-guess type.
+  function collectMedia(node, state, key = "", parent = null, group = "", depth = 0) {
+    if (node == null || depth > 8) return;
+
+    if (typeof node === "string") {
+      const url = node.trim();
+      if (!isMediaUrl(url) || state.seen.has(url)) return;
+      const kind = classify(url, key, parent);
+      if (kind === "audio") return;
+      state.seen.add(url);
+      state.found.push({
+        url,
+        key,
+        kind,
+        group,
+        area: parent ? (Number(parent.width) || 0) * (Number(parent.height) || 0) : 0
+      });
+      return;
     }
-    if (!raw || typeof raw !== "object") return null;
-    const url = firstUrl(raw, MEDIA_URL_KEYS);
-    if (!url) return null;
-    const kind = mediaKind(raw, url);
-    let thumb = firstUrl(raw, THUMB_KEYS);
-    if (thumb === url && kind === "video") thumb = "";
-    return { url, thumb: kind === "photo" && !thumb ? url : thumb, kind };
+
+    if (Array.isArray(node)) {
+      node.forEach((item) => collectMedia(item, state, key, parent, key, depth + 1));
+      return;
+    }
+
+    if (typeof node === "object") {
+      for (const [childKey, value] of Object.entries(node)) {
+        if (SKIP_KEYS.test(childKey)) continue;
+        collectMedia(value, state, childKey, node, group, depth + 1);
+      }
+    }
+  }
+
+  // Several qualities of the same video (video_versions, formats...): keep only the biggest.
+  function bestVariants(list) {
+    const best = new Map();
+    const rest = [];
+    for (const item of list) {
+      if (VARIANT_KEYS.test(item.group)) {
+        const current = best.get(item.group);
+        if (!current || item.area > current.area) best.set(item.group, item);
+      } else {
+        rest.push(item);
+      }
+    }
+    return [...best.values(), ...rest].sort((a, b) => b.area - a.area);
   }
 
   function unwrap(payload) {
@@ -278,27 +307,45 @@
     return node;
   }
 
-  function parseInstagram(payload) {
+  function parseInstagram(payload, link) {
     if (!payload || typeof payload !== "object") return null;
     const root = unwrap(payload);
     if (!root || typeof root !== "object") return null;
 
-    let rawEntries = [];
-    if (Array.isArray(root)) {
-      rawEntries = root;
-    } else {
-      for (const key of MEDIA_LIST_KEYS) {
-        if (Array.isArray(root[key]) && root[key].length) { rawEntries = root[key]; break; }
+    const state = { seen: new Set(), found: [] };
+    collectMedia(root, state);
+    if (!state.found.length) return null;
+
+    const videos = bestVariants(state.found.filter((m) => m.kind === "video"));
+    const unknown = state.found.filter((m) => m.kind === "unknown");
+    const photos = state.found.filter((m) => m.kind === "photo");
+
+    const isVideoPost =
+      /\/(reel|reels|tv)\//i.test(link || "") ||
+      root.is_video === true ||
+      /video|reel/i.test(String(root.type || root.media_type || ""));
+
+    // video files first, then links of unknown type (usually proxied downloads), photos last
+    let chosen = videos.length ? videos : unknown;
+    let kind = "video";
+    if (!chosen.length) {
+      if (isVideoPost) {
+        console.warn("ClearClip: the Worker sent no video file for this post.", payload);
+        throw new Error(
+          `The Worker sent only a preview image, not the video file. Fields it returned: ${Object.keys(root).join(", ") || "none"}.`
+        );
       }
+      chosen = photos;
+      kind = "photo";
     }
 
-    let entries = rawEntries.map(toEntry).filter(Boolean);
-    if (!entries.length && !Array.isArray(root)) {
-      const single = toEntry(root);
-      if (single) entries = [single];
-    }
-    entries = entries.filter((entry, index) => entries.findIndex((e) => e.url === entry.url) === index);
-    if (!entries.length) return null;
+    const noun = kind === "photo" ? "photo" : "video";
+    const ext = kind === "photo" ? "jpg" : "mp4";
+    const items = chosen.map((m, index) => ({
+      label: chosen.length === 1 ? `Download ${noun}` : `Download ${noun} ${index + 1}`,
+      url: m.url,
+      name: `clearclip_instagram_${index + 1}.${ext}`
+    }));
 
     const owner = root.owner || root.user || root.author;
     const author = (
@@ -307,17 +354,12 @@
       asText(root.uploader)
     ).replace(/^@/, "");
 
-    const items = entries.map((entry, index) => {
-      const noun = entry.kind === "photo" ? "photo" : "video";
-      const label = entries.length === 1 ? `Download ${noun}` : `Download ${noun} ${index + 1}`;
-      const ext = entry.kind === "photo" ? "jpg" : "mp4";
-      return { label, url: entry.url, name: `clearclip_instagram_${index + 1}.${ext}` };
-    });
+    const cover = (photos.find((m) => /thumb|cover|display|preview|poster|image/i.test(m.key)) || photos[0] || {}).url || "";
 
     return {
       items,
       meta: {
-        cover: firstUrl(root, THUMB_KEYS) || entries[0].thumb,
+        cover,
         title: asText(root.title) || asText(root.caption) || asText(root.description) || asText(root.text),
         author,
         fallbackTitle: PLATFORMS.Instagram.fallbackTitle
@@ -345,7 +387,7 @@
         throw error;
       }
 
-      const result = parseInstagram(payload);
+      const result = parseInstagram(payload, link);
       if (result) {
         igPath = path;
         return result;
