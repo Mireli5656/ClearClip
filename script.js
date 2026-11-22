@@ -2,18 +2,16 @@
    Vanilla JavaScript, no dependencies, no build step.
 
    TikTok    -> TikWM public API
-   Instagram -> your own Cloudflare Worker (see the constants below) */
+   Instagram -> your own Cloudflare Worker (video only) */
 (() => {
   "use strict";
 
   // ---------- configuration ----------
 
-  // Your Instagram Worker. The page calls  <IG_WORKER><path>?url=<instagram link>
+  // Your Instagram Worker (see README). It exposes:
+  //   GET /api/media?url=<instagram link>                 video details
+  //   GET /api/download?mediaUrl=<cdn url>&filename=...   the video file as a download
   const IG_WORKER = "https://ig-media-api.miraliseyidli5656.workers.dev";
-
-  // Paths are tried in order until the Worker answers with media; the one that works is
-  // remembered for the session. If you know your Worker's real path, put it first.
-  const IG_PATHS = ["/", "/api", "/media", "/download", "/api/media", "/api/instagram", "/instagram"];
 
   // Keep "www": tikwm.com redirects to www, and a redirect breaks the browser's CORS check.
   const TIKWM = "https://www.tikwm.com";
@@ -86,7 +84,6 @@
   const pill = $("pill");
 
   let busy = false;
-  let igPath = ""; // first Worker path that returned media
 
   const selected = () => document.querySelector('input[name="platform"]:checked').value;
 
@@ -194,222 +191,78 @@
     const id = String(d.id || "video").replace(/[^\w-]/g, "");
 
     const items = [];
-    if (hd) items.push({ label: "Download HD video", url: hd, name: `clearclip_${id}_hd.mp4` });
-    if (sd && sd !== hd) items.push({ label: "Download standard video", url: sd, name: `clearclip_${id}.mp4` });
+    if (hd) items.push({ label: "Download HD video", url: hd, name: `clearclip_${id}_hd.mp4`, openOnFail: true });
+    if (sd && sd !== hd) items.push({ label: "Download standard video", url: sd, name: `clearclip_${id}.mp4`, openOnFail: true });
     if (!items.length) throw new Error("No watermark-free version was found for this video.");
-    if (music) items.push({ label: "Download MP3 audio", url: music, name: `clearclip_${id}.mp3` });
+    if (music) items.push({ label: "Download MP3 audio", url: music, name: `clearclip_${id}.mp3`, openOnFail: true });
 
     return {
       items,
       meta: {
         cover: absolute(d.cover),
         title: d.title || "",
-        author: (d.author && d.author.unique_id) || "",
+        author: d.author && d.author.unique_id ? `@${d.author.unique_id}` : "",
         fallbackTitle: PLATFORMS.TikTok.fallbackTitle
       }
     };
   }
 
   // ---------- Instagram (your Cloudflare Worker) ----------
-  // The Worker's response is searched for media files wherever they sit. Video files always win:
-  // images are only used for the preview card, or offered when the post is a photo-only post.
+  // /api/media returns { success, data: { shortcode, title, items: [{ type: "video", quality, url, thumbnail, filename }] } }.
+  // The video itself is fetched through /api/download, because Instagram's CDN blocks direct hotlinking.
 
-  const ROUTE_ERROR = /\b(route|endpoint)\b|cannot (get|post)|^\s*(404\s*)?not found\s*$/i;
-  const SKIP_KEYS = /^(user|owner|author|avatar|profile|profile_pic\w*|account|uploader|music|audio)$/i;
-  const VARIANT_KEYS = /version|format|quality|source|variant|resolution/i;
+  const isHttpUrl = (value) => typeof value === "string" && Boolean(safeUrl(value.trim()));
 
-  const asText = (value) => {
-    if (typeof value === "string") return value.trim();
-    if (value && typeof value === "object") return asText(value.text || value.caption || "");
-    return "";
-  };
-
-  // A real media URL: http(s), and not the Instagram post page itself.
-  function isMediaUrl(value) {
-    const href = typeof value === "string" ? safeUrl(value.trim()) : null;
-    if (!href) return false;
-    const host = new URL(href).hostname.toLowerCase();
-    return !(host === "instagram.com" || host.endsWith(".instagram.com") || host === "instagr.am");
-  }
-
-  // Best guess of what a URL is: "video", "photo", "audio" or "unknown" (e.g. a proxied download link).
-  function classify(url, key, parent) {
-    const path = url.split("?")[0].toLowerCase();
-    if (/\.(mp4|mov|webm|m4v)$/.test(path)) return "video";
-    if (/\.(jpe?g|png|webp|heic|gif)$/.test(path)) return "photo";
-    if (/\.(mp3|m4a|aac|ogg|wav)$/.test(path)) return "audio";
-
-    const k = String(key).toLowerCase();
-    if (/video|mp4|play|stream|reel/.test(k)) return "video";
-    if (/image|photo|thumb|cover|display|poster|preview|pic/.test(k)) return "photo";
-
-    const hint = String((parent && (parent.type || parent.media_type || parent.mediaType || parent.kind)) || "").toLowerCase();
-    if ((parent && parent.is_video === true) || hint === "2" || /video|reel/.test(hint)) return "video";
-    if (hint === "1" || /image|photo|sidecar/.test(hint)) return "photo";
-    return "unknown";
-  }
-
-  // Walk the whole response and collect every media URL with its best-guess type.
-  function collectMedia(node, state, key = "", parent = null, group = "", depth = 0) {
-    if (node == null || depth > 8) return;
-
-    if (typeof node === "string") {
-      const url = node.trim();
-      if (!isMediaUrl(url) || state.seen.has(url)) return;
-      const kind = classify(url, key, parent);
-      if (kind === "audio") return;
-      state.seen.add(url);
-      state.found.push({
-        url,
-        key,
-        kind,
-        group,
-        area: parent ? (Number(parent.width) || 0) * (Number(parent.height) || 0) : 0
-      });
-      return;
+  async function viaInstagram(link) {
+    if (!/^\/(p|reel|reels|tv)\/[\w-]+/i.test(new URL(link).pathname)) {
+      throw new Error("Use a link to a public Instagram post or reel (instagram.com/reel/…).");
     }
 
-    if (Array.isArray(node)) {
-      node.forEach((item) => collectMedia(item, state, key, parent, key, depth + 1));
-      return;
+    const payload = await fetchJson(`${IG_WORKER}/api/media?url=${encodeURIComponent(link)}`);
+    if (!payload || payload.success !== true || !payload.data) {
+      const reason = payload && typeof payload.error === "string" ? payload.error : "";
+      throw new Error(
+        reason ? `The Instagram service replied: ${reason}` : "The Instagram service sent an unexpected response."
+      );
     }
 
-    if (typeof node === "object") {
-      for (const [childKey, value] of Object.entries(node)) {
-        if (SKIP_KEYS.test(childKey)) continue;
-        collectMedia(value, state, childKey, node, group, depth + 1);
-      }
-    }
-  }
+    const data = payload.data;
+    const videos = (Array.isArray(data.items) ? data.items : []).filter(
+      (entry) => entry && entry.type === "video" && isHttpUrl(entry.url)
+    );
+    if (!videos.length) throw new Error("No video file was found for this post. Check that it is public.");
 
-  // Several qualities of the same video (video_versions, formats...): keep only the biggest.
-  function bestVariants(list) {
-    const best = new Map();
-    const rest = [];
-    for (const item of list) {
-      if (VARIANT_KEYS.test(item.group)) {
-        const current = best.get(item.group);
-        if (!current || item.area > current.area) best.set(item.group, item);
-      } else {
-        rest.push(item);
-      }
-    }
-    return [...best.values(), ...rest].sort((a, b) => b.area - a.area);
-  }
+    const items = videos.map((video, index) => {
+      const filename = String(video.filename || `ig_${data.shortcode || "video"}.mp4`);
+      const quality = typeof video.quality === "string" && video.quality ? `${video.quality} ` : "";
+      return {
+        label: videos.length === 1 ? `Download ${quality}video` : `Download ${quality}video ${index + 1}`,
+        url: `${IG_WORKER}/api/download?mediaUrl=${encodeURIComponent(video.url.trim())}&filename=${encodeURIComponent(filename)}`,
+        name: filename,
+        openOnFail: false
+      };
+    });
 
-  function unwrap(payload) {
-    let node = payload;
-    for (const key of ["data", "result", "response"]) {
-      if (node && typeof node === "object" && !Array.isArray(node) && node[key] && typeof node[key] === "object") {
-        node = node[key];
-      }
-    }
-    return node;
-  }
-
-  function parseInstagram(payload, link) {
-    if (!payload || typeof payload !== "object") return null;
-    const root = unwrap(payload);
-    if (!root || typeof root !== "object") return null;
-
-    const state = { seen: new Set(), found: [] };
-    collectMedia(root, state);
-    if (!state.found.length) return null;
-
-    const videos = bestVariants(state.found.filter((m) => m.kind === "video"));
-    const unknown = state.found.filter((m) => m.kind === "unknown");
-    const photos = state.found.filter((m) => m.kind === "photo");
-
-    const isVideoPost =
-      /\/(reel|reels|tv)\//i.test(link || "") ||
-      root.is_video === true ||
-      /video|reel/i.test(String(root.type || root.media_type || ""));
-
-    // video files first, then links of unknown type (usually proxied downloads), photos last
-    let chosen = videos.length ? videos : unknown;
-    let kind = "video";
-    if (!chosen.length) {
-      if (isVideoPost) {
-        console.warn("ClearClip: the Worker sent no video file for this post.", payload);
-        throw new Error(
-          `The Worker sent only a preview image, not the video file. Fields it returned: ${Object.keys(root).join(", ") || "none"}.`
-        );
-      }
-      chosen = photos;
-      kind = "photo";
-    }
-
-    const noun = kind === "photo" ? "photo" : "video";
-    const ext = kind === "photo" ? "jpg" : "mp4";
-    const items = chosen.map((m, index) => ({
-      label: chosen.length === 1 ? `Download ${noun}` : `Download ${noun} ${index + 1}`,
-      url: m.url,
-      name: `clearclip_instagram_${index + 1}.${ext}`
-    }));
-
-    const owner = root.owner || root.user || root.author;
-    const author = (
-      asText(root.username) ||
-      asText(owner && typeof owner === "object" ? owner.username : owner) ||
-      asText(root.uploader)
-    ).replace(/^@/, "");
-
-    const cover = (photos.find((m) => /thumb|cover|display|preview|poster|image/i.test(m.key)) || photos[0] || {}).url || "";
+    // Instagram titles look like:  Name on Instagram: "caption"
+    const rawTitle = typeof data.title === "string" ? data.title.trim() : "";
+    const match = rawTitle.match(/^(.+?) on Instagram:\s*["“]?([\s\S]*?)["”]?$/);
 
     return {
       items,
       meta: {
-        cover,
-        title: asText(root.title) || asText(root.caption) || asText(root.description) || asText(root.text),
-        author,
+        cover: videos.map((video) => video.thumbnail).find(isHttpUrl) || "",
+        title: match ? match[2] : rawTitle,
+        author: match ? match[1] : "",
         fallbackTitle: PLATFORMS.Instagram.fallbackTitle
       }
     };
-  }
-
-  function workerMessage(payload) {
-    if (!payload || typeof payload !== "object") return "";
-    const message = asText(payload.error) || asText(payload.message) || asText(payload.msg);
-    if (message) return message;
-    return payload.success === false ? "The Worker reported an error." : "";
-  }
-
-  async function viaInstagram(link) {
-    const paths = igPath ? [igPath] : IG_PATHS;
-    let failure = "";
-
-    for (const path of paths) {
-      let payload;
-      try {
-        payload = await fetchJson(`${IG_WORKER}${path}?url=${encodeURIComponent(link)}`);
-      } catch (error) {
-        if (error.status === 404) continue; // wrong path: try the next one
-        throw error;
-      }
-
-      const result = parseInstagram(payload, link);
-      if (result) {
-        igPath = path;
-        return result;
-      }
-
-      const message = workerMessage(payload);
-      if (message && !ROUTE_ERROR.test(message)) { failure = message; break; }
-    }
-
-    console.warn("ClearClip: the Instagram Worker answered, but no media was found in the response.");
-    throw new Error(
-      failure
-        ? `The Instagram service replied: ${failure}`
-        : "The Instagram service answered, but no video was found. Check that the post is public."
-    );
   }
 
   // ---------- results ----------
 
   // Saves the file from inside the page so it lands in Downloads with a proper name.
   // If the host blocks that (CORS), open the file directly instead.
-  async function saveAsFile(href, name, link) {
+  async function saveAsFile(href, name, link, openOnFail) {
     if (link.dataset.busy) return;
     link.dataset.busy = "1";
     const label = link.lastChild;
@@ -428,9 +281,13 @@
       setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
       setStatus("Download started. Check your Downloads folder.", "ok");
     } catch {
-      const opened = window.open(href, "_blank");
-      if (opened) opened.opener = null;
-      else window.location.href = href;
+      if (openOnFail) {
+        const opened = window.open(href, "_blank");
+        if (opened) opened.opener = null;
+        else window.location.href = href;
+      } else {
+        setStatus("The download failed. Try again in a moment.", "err");
+      }
     } finally {
       label.textContent = original;
       delete link.dataset.busy;
@@ -464,7 +321,7 @@
     if (meta.author) {
       const author = document.createElement("div");
       author.className = "meta-author";
-      author.textContent = `@${meta.author}`;
+      author.textContent = meta.author;
       text.append(author);
     }
 
@@ -493,7 +350,7 @@
       link.append(document.createTextNode(entry.label));
       link.addEventListener("click", (event) => {
         event.preventDefault();
-        saveAsFile(href, entry.name, link);
+        saveAsFile(href, entry.name, link, entry.openOnFail);
       });
 
       const copy = document.createElement("button");
