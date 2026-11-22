@@ -19,7 +19,6 @@
   --err: #B42318;
   --btn: #0C3B46;
   --on-btn: #FFFFFF;
-  --sheet: #FFFFFF;
   --focus: #0C3B46;
 
   /* the frame is a dark "screen" in both themes */
@@ -41,7 +40,6 @@
     --err: #FF8E7E;
     --btn: #E4F2F4;
     --on-btn: #0A2A32;
-    --sheet: #0F3943;
     --focus: #FFB627;
     --lagoon-a: #12505F;
     --lagoon-b: #07222A;
@@ -100,30 +98,6 @@ button { cursor: pointer; }
   text-decoration: none;
   font: 700 1.3rem/1 var(--font-display);
   letter-spacing: -.01em;
-}
-
-.icon-btn {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border: 1px solid var(--line);
-  border-radius: .875rem;
-  background: var(--foam);
-  color: var(--ink);
-}
-
-.icon-btn.on::after {
-  content: "";
-  position: absolute;
-  top: .45rem;
-  right: .45rem;
-  width: .55rem;
-  height: .55rem;
-  border-radius: 50%;
-  background: var(--marigold);
-  box-shadow: 0 0 0 2px var(--foam);
 }
 
 /* ---------- intro ---------- */
@@ -268,16 +242,16 @@ button { cursor: pointer; }
   font-weight: 600;
 }
 
-/* ---------- quality ---------- */
+/* ---------- platform switch ---------- */
 
-.quality {
-  margin: 1.1rem 0 0;
+.platform {
+  margin: 0 0 1.1rem;
   padding: 0;
   border: 0;
   min-width: 0;
 }
 
-.quality legend {
+.platform legend {
   padding: 0;
   margin-bottom: .4rem;
   font-size: .875rem;
@@ -286,7 +260,7 @@ button { cursor: pointer; }
 
 .seg {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   padding: .25rem;
   border: 1px solid var(--line);
   border-radius: .875rem;
@@ -353,16 +327,6 @@ button { cursor: pointer; }
 .status.ok { color: var(--ok); }
 .status.err { color: var(--err); }
 
-.linkbtn {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font-weight: 600;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
 /* ---------- result ---------- */
 
 .result {
@@ -409,77 +373,6 @@ button { cursor: pointer; }
 .foot { padding-block: 2.25rem 1.75rem; }
 .foot p { margin: 0; font-size: .8125rem; color: var(--muted); max-width: 46ch; }
 
-/* ---------- settings sheet ---------- */
-
-dialog {
-  width: 100%;
-  max-width: 34rem;
-  margin: auto auto 0;
-  padding: 1.5rem 1.25rem 1.5rem;
-  border: 0;
-  border-radius: 1.5rem 1.5rem 0 0;
-  background: var(--sheet);
-  color: var(--ink);
-}
-
-@media (min-width: 40rem) {
-  dialog { margin: auto; border-radius: 1.5rem; padding: 1.75rem; }
-}
-
-dialog[open] { animation: sheet .28s cubic-bezier(.2, .8, .2, 1); }
-
-dialog::backdrop {
-  background: rgba(6, 28, 34, .6);
-  backdrop-filter: blur(3px);
-}
-
-dialog h2 {
-  margin: 0 0 .5rem;
-  font: 700 1.5rem/1.15 var(--font-display);
-  letter-spacing: -.02em;
-}
-
-dialog .lead { margin: 0 0 1.25rem; color: var(--muted); }
-
-.sfield { margin-bottom: 1rem; }
-
-.sfield label {
-  display: block;
-  margin-bottom: .35rem;
-  font-size: .875rem;
-  font-weight: 600;
-}
-
-.sfield .opt { font-weight: 400; color: var(--muted); }
-
-.sfield input {
-  width: 100%;
-  height: 3rem;
-  padding: 0 .9rem;
-  border: 1px solid var(--line);
-  border-radius: .75rem;
-  background: var(--rinse);
-  color: var(--ink);
-}
-
-.hint { margin: 0 0 .75rem; font-size: .8125rem; color: var(--muted); }
-.serror { margin: 0 0 .75rem; font-size: .875rem; color: var(--err); }
-
-.actions { display: grid; grid-template-columns: 1fr auto; gap: .6rem; }
-.actions .go { margin-top: 0; }
-
-.ghost {
-  min-height: 3.5rem;
-  padding: 0 1.25rem;
-  border: 1px solid var(--line);
-  border-radius: .875rem;
-  background: transparent;
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.forget { display: block; margin: 1rem auto 0; font-size: .875rem; color: var(--muted); }
-
 /* ---------- motion ---------- */
 
 @keyframes sweep {
@@ -492,10 +385,6 @@ dialog .lead { margin: 0 0 1.25rem; color: var(--muted); }
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: none; }
 }
-@keyframes sheet {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: none; }
-}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
@@ -503,7 +392,7 @@ dialog .lead { margin: 0 0 1.25rem; color: var(--muted); }
     animation-iteration-count: 1 !important;
     transition-duration: .001ms !important;
   }
-  .item { animation-delay: 0s !important; }
+  .item, .meta { animation-delay: 0s !important; }
 }
 
 /* ---------- video preview card ---------- */
