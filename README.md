@@ -24,7 +24,7 @@ ClearClip is a small static website: plain HTML, CSS and JavaScript, no build to
 2. Paste the link and tap **Get video**.
 3. Check the preview card, then tap a download button. **Copy link** gives you the direct file link.
 
-TikTok gives you the HD and standard video without watermark, plus the MP3 audio. Instagram returns whatever the Worker finds for the post: a video, a photo, or every item of a carousel.
+TikTok gives you the HD and standard video without watermark, plus the MP3 audio. Instagram gives you the **video file** (HD). The Worker is video-only, so you never get a photo.
 
 ## How it works
 
@@ -37,29 +37,16 @@ Your links are sent to these services. Nothing is stored in this repository.
 
 ## Instagram Worker
 
-The page calls the Worker like this:
+The page uses two endpoints of your Cloudflare Worker (`IG_WORKER` at the top of `script.js`):
 
-```
-GET <worker>/?url=<instagram link>
-```
+| Endpoint | What it does |
+|----------|--------------|
+| `GET /api/media?url=<instagram link>` | Returns the video details: `title`, `thumbnail`, `quality`, `filename` and the CDN `url`. Only public posts, reels and `tv` links work. |
+| `GET /api/download?mediaUrl=<cdn url>&filename=<name>` | Streams the video file with a download header. Instagram's CDN blocks direct hotlinking, so every Instagram download goes through this endpoint. |
 
-If your Worker uses another path, ClearClip also tries `/api`, `/media`, `/download`, `/api/media`, `/api/instagram` and `/instagram`, and keeps the first one that answers with media. To pin the exact path or change the address, edit the constants at the top of `script.js` (`IG_WORKER`, `IG_PATHS`).
+The Worker sends `Access-Control-Allow-Origin: *`, so the page can call it from GitHub Pages without extra setup. If you want only your own site to use it, change that header to your exact Pages origin (for example `https://<your-username>.github.io`, no path) in the Worker.
 
-The response is read flexibly. It can be a single URL (`video_url`, `url`, `download_url`) or a list (`media`, `items`, `links`), with an optional `thumbnail`, `caption` or `title`, and `username`. A post page link from `instagram.com` is never treated as a media file.
-
-### CORS
-
-The Worker must allow requests from your Pages site, or the browser blocks them. Add these headers to every Worker response, and answer `OPTIONS` requests:
-
-```js
-const CORS = {
-  "Access-Control-Allow-Origin": "https://<your-username>.github.io",
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type"
-};
-```
-
-Use your exact site origin (no path) instead of `*` if you want only your own page to use the Worker.
+If the Worker can't read a post, the page shows its message (for example "No direct video stream found"). Some public posts can't be read this way; that comes from the Worker's source, not from the page.
 
 ## Fonts
 
